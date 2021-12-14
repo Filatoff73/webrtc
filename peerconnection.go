@@ -1638,6 +1638,40 @@ func (pc *PeerConnection) AddTrack(track TrackLocal) (*RTPSender, error) {
 	return transceiver.Sender(), nil
 }
 
+// AddTrack adds a Track to the PeerConnection
+func (pc *PeerConnection) AddTrackToTrancivier(track TrackLocal, transceiver *RTPTransceiver) (*RTPSender, error) {
+	if pc.isClosed.get() {
+		return nil, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
+	}
+
+	if transceiver==nil || transceiver.stopped || transceiver.kind != track.Kind() {
+		return nil,fmt.Errorf("error add track to trancivier")
+	}
+
+	if transceiver.Sender() != nil {
+		 if err:= transceiver.Sender().ReplaceTrack(track); err!=nil {
+			 return nil, err
+		 }
+
+		return transceiver.Sender(),nil
+	}
+
+	sender, err := pc.api.NewRTPSender(track, pc.dtlsTransport)
+	if err != nil {
+		return nil, err
+	}
+	err = transceiver.SetSender(sender, track)
+	if err != nil {
+		_ = sender.Stop()
+		transceiver.setSender(nil)
+		return nil, err
+	}
+
+	pc.onNegotiationNeeded()
+
+	return sender, nil
+}
+
 // RemoveTrack removes a Track from the PeerConnection
 func (pc *PeerConnection) RemoveTrack(sender *RTPSender) (err error) {
 	if pc.isClosed.get() {
@@ -2268,7 +2302,7 @@ func (pc *PeerConnection) generateMatchedSDP(transceivers []*RTPTransceiver, use
 		switch {
 		case sdpSemantics == SDPSemanticsPlanB || sdpSemantics == SDPSemanticsUnifiedPlanWithFallback && detectedPlanB:
 			if !detectedPlanB {
-				return nil, &rtcerr.TypeError{Err: fmt.Errorf("%w: Expected PlanB, but RemoteDescription is UnifiedPlan", ErrIncorrectSDPSemantics)}
+				return nil, &rtcerr.TypeError{Err: ErrIncorrectSDPSemantics}
 			}
 			// If we're responding to a plan-b offer, then we should try to fill up this
 			// media entry with all matching local transceivers
@@ -2292,7 +2326,7 @@ func (pc *PeerConnection) generateMatchedSDP(transceivers []*RTPTransceiver, use
 			mediaSections = append(mediaSections, mediaSection{id: midValue, transceivers: mediaTransceivers})
 		case sdpSemantics == SDPSemanticsUnifiedPlan || sdpSemantics == SDPSemanticsUnifiedPlanWithFallback:
 			if detectedPlanB {
-				return nil, &rtcerr.TypeError{Err: fmt.Errorf("%w: Expected UnifiedPlan, but RemoteDescription is PlanB", ErrIncorrectSDPSemantics)}
+				return nil, &rtcerr.TypeError{Err: ErrIncorrectSDPSemantics}
 			}
 			t, localTransceivers = findByMid(midValue, localTransceivers)
 			if t == nil {
